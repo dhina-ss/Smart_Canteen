@@ -1,3 +1,4 @@
+import axios from 'axios'
 const API_ROOT = import.meta.env.VITE_API_URL || "http://localhost:8000/api";
 
 async function fetchJSON(path, opts = {}) {
@@ -35,6 +36,22 @@ async function fetchJSON(path, opts = {}) {
 }
 
 // GET endpoints
+export const getDashboardStats = async () => {
+  try {
+    const response = await axios.get(`${API_ROOT}/sales/dashboard_stats/`);
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching dashboard stats:', error);
+    return {
+      total_sales: 0,
+      total_revenue: 0,
+      total_customers: 0,
+      total_items_sold: 0,
+      avg_sale_value: 0,
+      last_updated: new Date().toISOString()
+    };
+  }
+};
 export const getCustomers = async () => {
   console.log('👥 Fetching fresh customers data...');
   try {

@@ -1,8 +1,7 @@
 from rest_framework import serializers
-from .models import Customer, Item, Sale, SaleItem
+from .models import Customer, Item, Sale, SaleItem, DashboardStats
 import uuid
 from django.db import transaction
-
 
 class CustomerSerializer(serializers.ModelSerializer):
     class Meta:
@@ -29,30 +28,43 @@ class SaleSerializer(serializers.ModelSerializer):
         model = Sale
         fields = ['id','invoice_number','customer','customer_detail','created_at','items','total_amount']
 
-def create(self, validated_data):
-    items_data = validated_data.pop('items')
-    # generate invoice number
-    
-    validated_data['invoice_number'] = f"INV-{uuid.uuid4().hex[:8].upper()}"
-    sale = Sale.objects.create(**validated_data)
-    total = 0
-    
-    with transaction.atomic():
-        for it in items_data:
-            item_obj = Item.objects.select_for_update().get(pk=it['item'].id if isinstance(it['item'], Item) else it['item'])
-            quantity = int(it['quantity'])
-            if item_obj.stock < quantity:
-                raise serializers.ValidationError({ 'stock': f"Not enough stock for {item_obj.name}. Available: {item_obj.stock}" })
-            item_obj.stock -= quantity
-            item_obj.save()
-            unit_price = it.get('unit_price') or item_obj.price
-            SaleItem.objects.create(sale=sale, item=item_obj, quantity=quantity, unit_price=unit_price)
-            total += quantity * unit_price
-        sale.total_amount = total
-        sale.save()
-    return sale
+    def create(self, validated_data):
+        items_data = validated_data.pop('items')
+        
+        # Generate invoice number
+        validated_data['invoice_number'] = f"INV-{uuid.uuid4().hex[:8].upper()}"
+        sale = Sale.objects.create(**validated_data)
+        total = 0
+        
+        with transaction.atomic():
+            for it in items_data:
+                item_obj = Item.objects.select_for_update().get(pk=it['item'].id if isinstance(it['item'], Item) else it['item'])
+                quantity = int(it['quantity'])
+                if item_obj.stock < quantity:
+                    raise serializers.ValidationError({ 'stock': f"Not enough stock for {item_obj.name}. Available: {item_obj.stock}" })
+                item_obj.stock -= quantity
+                item_obj.save()
+                unit_price = it.get('unit_price') or item_obj.price
+                SaleItem.objects.create(sale=sale, item=item_obj, quantity=quantity, unit_price=unit_price)
+                total += quantity * unit_price
+            sale.total_amount = total
+            sale.save()
+        
+        # Trigger dashboard stats update via signal
+        from .signals import update_dashboard_stats
+        update_dashboard_stats()
+        
+        return sale
 
-def to_representation(self, instance):
-    data = super().to_representation(instance)
-    data['items'] = SaleItemSerializer(instance.items.all(), many=True).data
-    return data
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['items'] = SaleItemSerializer(instance.items.all(), many=True).data
+        return data
+
+# NEW SERIALIZER
+class DashboardStatsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DashboardStats
+        fields = ['id', 'total_sales', 'total_revenue', 'total_customers', 
+                 'total_items_sold', 'avg_sale_value', 'last_updated']
+        

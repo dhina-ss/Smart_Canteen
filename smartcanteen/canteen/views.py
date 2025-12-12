@@ -2,8 +2,8 @@ from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db.models import Sum, F
-from .models import Customer, Item, Sale
-from .serializers import CustomerSerializer, ItemSerializer, SaleSerializer
+from .models import Customer, Item, Sale, DashboardStats
+from .serializers import CustomerSerializer, ItemSerializer, SaleSerializer, DashboardStatsSerializer
 from django.db.models.functions import TruncMonth
 
 class CustomerViewSet(viewsets.ModelViewSet):
@@ -47,8 +47,25 @@ class SaleViewSet(viewsets.ModelViewSet):
         ).order_by('-qty')[:10]
         return Response(data)
     
+    # NEW ENDPOINT
+    @action(detail=False, methods=['get'])
+    def dashboard_stats(self, request):
+        """Get dashboard statistics"""
+        # Get the dashboard stats
+        stats = DashboardStats.objects.first()
+        
+        if not stats:
+            # Create default stats
+            from .signals import update_dashboard_stats
+            update_dashboard_stats()
+            stats = DashboardStats.objects.first()
+        
+        serializer = DashboardStatsSerializer(stats)
+        return Response(serializer.data)
+    
     @action(detail=True, methods=['get'])
     def invoice(self, request, pk=None):
         sale = self.get_object()
         serializer = self.get_serializer(sale)
         return Response(serializer.data)
+    
