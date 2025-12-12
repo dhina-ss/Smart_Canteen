@@ -7,6 +7,7 @@ class Customer(models.Model):
     contact_person = models.CharField(max_length=200, blank=True)
     phone = models.CharField(max_length=50, blank=True)
     email = models.EmailField(blank=True)
+    company = models.CharField(blank=True)
     address = models.TextField(blank=True)
     notes = models.TextField(blank=True)
 

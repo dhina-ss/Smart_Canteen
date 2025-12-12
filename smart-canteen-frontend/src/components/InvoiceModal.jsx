@@ -5,11 +5,10 @@ import {
   postSale, 
   postCustomer, 
   getSales,
-  updateItemStock,  // This should now work
-  updateMultipleStocks  // Optional
+  updateItemStock,
+  updateMultipleStocks
 } from '../services/api';
 import { generateInvoicePDF } from '../services/InvoicePDFGenerator';
-
 
 export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
   const [customers, setCustomers] = useState([]);
@@ -21,10 +20,11 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
   // Form state
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [invoiceItems, setInvoiceItems] = useState([{ itemId: '', quantity: 1, unitPrice: 0, availableStock: null }]);
   const [notes, setNotes] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState('cash'); // New: Payment method state
-  const [paymentStatus, setPaymentStatus] = useState('paid'); // New: Payment status state
+  const [paymentMethod, setPaymentMethod] = useState('cash');
+  const [paymentStatus, setPaymentStatus] = useState('paid');
 
   useEffect(() => {
     if (isOpen) {
@@ -32,6 +32,7 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
       // Reset form
       setCustomerName('');
       setCustomerPhone('');
+      setCompanyName('');
       setInvoiceItems([{ itemId: '', quantity: 1, unitPrice: 0, availableStock: null }]);
       setNotes('');
       setPaymentMethod('cash');
@@ -120,7 +121,6 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
   };
 
   const generateInvoiceNumber = () => {
-    // Generate invoice number based on existing sales count
     const invoiceCount = sales.length + 1;
     const invoiceNumber = `INV-${String(invoiceCount).padStart(4, '0')}`;
     console.log('Generated invoice number:', invoiceNumber);
@@ -131,7 +131,6 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
     e.preventDefault();
     setError('');
     
-    // Validation (keep existing validation)
     if (!customerName.trim()) {
       setError('Please enter customer name');
       return;
@@ -153,23 +152,21 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
       
       let customerId;
       
-      // Check if customer exists by phone number
       const existingCustomer = customers.find(c => 
         c.phone === customerPhone.trim()
       );
       
       if (existingCustomer) {
-        // Use existing customer
         customerId = existingCustomer.id;
         console.log('✅ Using existing customer:', existingCustomer);
       } else {
-        // Create new customer
         console.log('🆕 Creating new customer...');
         try {
           const newCustomer = await postCustomer({
             name: customerName.trim(),
             phone: customerPhone.trim(),
-            email: ''
+            email: '',
+            company: companyName.trim() || ''
           });
           customerId = newCustomer.id;
           console.log('✅ New customer created:', newCustomer);
@@ -181,7 +178,6 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
         }
       }
 
-      // Prepare items payload
       const itemsPayload = invoiceItems
         .filter(item => item.itemId && item.quantity > 0)
         .map(item => ({
@@ -190,7 +186,6 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
           unit_price: item.unitPrice
         }));
 
-      // Generate invoice number
       const invoiceNumber = generateInvoiceNumber();
 
       const payload = {
@@ -199,56 +194,53 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
         notes: notes.trim() || '',
         invoice_number: invoiceNumber,
         total_amount: calculateTotal().toFixed(2),
-        payment_method: paymentMethod, // Added: Payment method
-        payment_status: paymentStatus, // Added: Payment status
-        tax_amount: 0, // Added: Placeholder for tax
-        discount_amount: 0 // Added: Placeholder for discount
+        payment_method: paymentMethod,
+        payment_status: paymentStatus,
+        tax_amount: 0,
+        discount_amount: 0
       };
 
       console.log('📦 Submitting invoice payload:', payload);
 
-      // Create the invoice
       let result;
       try {
         result = await postSale(payload);
         console.log('✅ Invoice created successfully:', result);
         
-        // ✅ STEP 1: Update product stocks
         await updateProductStocks();
         
-        // ✅ STEP 2: Generate PDF
         generateInvoicePDF({
           invoice_number: invoiceNumber,
           customer_name: customerName,
+          company_name: companyName,
           customer_phone: customerPhone,
           items: invoiceItems,
           total_amount: calculateTotal().toFixed(2),
           notes: notes.trim(),
-          payment_method: paymentMethod, // Added to PDF
-          payment_status: paymentStatus // Added to PDF
+          payment_method: paymentMethod,
+          payment_status: paymentStatus
         });
         
       } catch (invoiceError) {
         console.error('❌ Failed to create invoice:', invoiceError);
         
-        // Try fallback without invoice_number if backend rejects it
         if (invoiceError.message?.includes('invoice_number')) {
           console.log('🔄 Trying without invoice_number...');
           const { invoice_number, ...payloadWithoutInvoice } = payload;
           result = await postSale(payloadWithoutInvoice);
           
-          // Still update stocks if sale succeeded
           if (result) {
             await updateProductStocks();
             generateInvoicePDF({
-              invoice_number: `INV-${sales.length + 1}`, // Generate client-side number
+              invoice_number: `INV-${sales.length + 1}`,
               customer_name: customerName,
+              company_name: companyName,
               customer_phone: customerPhone,
               items: invoiceItems,
               total_amount: calculateTotal().toFixed(2),
               notes: notes.trim(),
-              payment_method: paymentMethod, // Added to PDF
-              payment_status: paymentStatus // Added to PDF
+              payment_method: paymentMethod,
+              payment_status: paymentStatus
             });
           }
         } else {
@@ -258,12 +250,15 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
 
       alert('✅ Invoice created successfully! PDF downloaded automatically.');
       
-      // Call the callback to refresh parent components
+      // 🔥 CRITICAL FIX: Dispatch event to refresh Customers page
+      console.log('📢 Dispatching invoiceCreated event');
+      window.dispatchEvent(new Event('invoiceCreated'));
+      
       if (onInvoiceCreated) {
+        console.log('📊 Calling onInvoiceCreated callback to refresh data');
         onInvoiceCreated(result);
       }
       
-      // Close modal
       onClose();
       
     } catch (error) {
@@ -278,63 +273,58 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
     }
   };
 
-  // New function to update product stocks
   const updateProductStocks = async () => {
-  try {
-    console.log('🔄 Starting stock updates...');
-    
-    const stockUpdates = invoiceItems.map(item => {
-      const selectedItem = items.find(it => it.id == item.itemId);
-      if (!selectedItem) {
-        console.warn(`⚠️ Item ${item.itemId} not found in items list`);
-        return null;
-      }
-      
-      const newStock = selectedItem.stock - item.quantity;
-      console.log(`Item ${item.itemId}: ${selectedItem.stock} - ${item.quantity} = ${newStock}`);
-      
-      return {
-        id: item.itemId,
-        newStock: Math.max(0, newStock)
-      };
-    }).filter(update => update !== null);
-    
-    if (stockUpdates.length === 0) {
-      console.warn('⚠️ No stock updates to process');
-      return;
-    }
-    
-    console.log('Stock updates to process:', stockUpdates);
-    
-    // Update stocks using the corrected API function
-    for (const update of stockUpdates) {
-      try {
-        console.log(`Processing update for item ${update.id}...`);
-        const updatedItem = await updateItemStock(update.id, update.newStock);
-        console.log(`✅ Stock updated for item ${update.id}:`, updatedItem);
-      } catch (itemError) {
-        console.error(`❌ Failed to update stock for item ${update.id}:`, itemError);
-        // Continue with other items even if one fails
-      }
-    }
-    
-    console.log('✅ Stock update process completed');
-    
-    // Refresh items data
     try {
-      const updatedItems = await getItems();
-      setItems(updatedItems);
-      console.log('✅ Items list refreshed');
-    } catch (refreshError) {
-      console.warn('⚠️ Could not refresh items list:', refreshError);
-      // Non-critical error
+      console.log('🔄 Starting stock updates...');
+      
+      const stockUpdates = invoiceItems.map(item => {
+        const selectedItem = items.find(it => it.id == item.itemId);
+        if (!selectedItem) {
+          console.warn(`⚠️ Item ${item.itemId} not found in items list`);
+          return null;
+        }
+        
+        const newStock = selectedItem.stock - item.quantity;
+        console.log(`Item ${item.itemId}: ${selectedItem.stock} - ${item.quantity} = ${newStock}`);
+        
+        return {
+          id: item.itemId,
+          newStock: Math.max(0, newStock)
+        };
+      }).filter(update => update !== null);
+      
+      if (stockUpdates.length === 0) {
+        console.warn('⚠️ No stock updates to process');
+        return;
+      }
+      
+      console.log('Stock updates to process:', stockUpdates);
+      
+      for (const update of stockUpdates) {
+        try {
+          console.log(`Processing update for item ${update.id}...`);
+          const updatedItem = await updateItemStock(update.id, update.newStock);
+          console.log(`✅ Stock updated for item ${update.id}:`, updatedItem);
+        } catch (itemError) {
+          console.error(`❌ Failed to update stock for item ${update.id}:`, itemError);
+        }
+      }
+      
+      console.log('✅ Stock update process completed');
+      
+      try {
+        const updatedItems = await getItems();
+        setItems(updatedItems);
+        console.log('✅ Items list refreshed');
+      } catch (refreshError) {
+        console.warn('⚠️ Could not refresh items list:', refreshError);
+      }
+      
+    } catch (stockError) {
+      console.error('❌ Stock update process failed:', stockError);
+      throw new Error(`Stock update failed: ${stockError.message}`);
     }
-    
-  } catch (stockError) {
-    console.error('❌ Stock update process failed:', stockError);
-    throw new Error(`Stock update failed: ${stockError.message}`);
-  }
-};
+  };
 
   if (!isOpen) return null;
 
@@ -359,7 +349,6 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
         maxHeight: '90vh',
         overflow: 'auto'
       }}>
-        {/* Header */}
         <div style={{
           padding: '20px 24px',
           borderBottom: '1px solid #e5e7eb',
@@ -399,7 +388,6 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
           </button>
         </div>
 
-        {/* Error Display */}
         {error && (
           <div style={{
             margin: '16px 24px 0',
@@ -417,9 +405,7 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
           </div>
         )}
 
-        {/* Form */}
         <form onSubmit={handleSubmit} style={{ padding: '24px' }}>
-          {/* Customer Details Section */}
           <div style={{ 
             marginBottom: '32px',
             padding: '20px',
@@ -432,7 +418,6 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
             </h3>
             
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-              {/* Customer Name */}
               <div>
                 <label style={{
                   display: 'block',
@@ -460,7 +445,6 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
                 />
               </div>
 
-              {/* Customer Phone */}
               <div>
                 <label style={{
                   display: 'block',
@@ -508,12 +492,8 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
                   </p>
                 )}
               </div>
-            </div>
 
-            {/* Payment Information */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '16px' }}>
-              {/* Payment Method */}
-              <div>
+              <div style={{ gridColumn: 'span 2' }}>
                 <label style={{
                   display: 'block',
                   fontSize: '14px',
@@ -521,11 +501,13 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
                   color: '#374151',
                   marginBottom: '8px'
                 }}>
-                  Payment Method *
+                  Company Name (Optional)
                 </label>
-                <select
-                  value={paymentMethod}
-                  onChange={(e) => setPaymentMethod(e.target.value)}
+                <input
+                  type="text"
+                  value={companyName}
+                  onChange={(e) => setCompanyName(e.target.value)}
+                  placeholder="Enter company name"
                   style={{
                     width: '100%',
                     padding: '10px 12px',
@@ -534,48 +516,10 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
                     fontSize: '14px',
                     backgroundColor: 'white'
                   }}
-                >
-                  <option value="cash">Cash</option>
-                  <option value="card">Credit/Debit Card</option>
-                  <option value="upi">UPI</option>
-                  <option value="bank_transfer">Bank Transfer</option>
-                  <option value="cheque">Cheque</option>
-                  <option value="other">Other</option>
-                </select>
-              </div>
-
-              {/* Payment Status */}
-              <div>
-                <label style={{
-                  display: 'block',
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  color: '#374151',
-                  marginBottom: '8px'
-                }}>
-                  Payment Status *
-                </label>
-                <select
-                  value={paymentStatus}
-                  onChange={(e) => setPaymentStatus(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '10px 12px',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '8px',
-                    fontSize: '14px',
-                    backgroundColor: 'white'
-                  }}
-                >
-                  <option value="paid">Paid</option>
-                  <option value="pending">Pending</option>
-                  <option value="partial">Partially Paid</option>
-                  <option value="cancelled">Cancelled</option>
-                </select>
+                />
               </div>
             </div>
 
-            {/* Customer Status Indicator */}
             {customerName.trim() && customerPhone.trim() && (
               <div style={{ 
                 marginTop: '16px',
@@ -616,7 +560,6 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
             )}
           </div>
 
-          {/* Items Table */}
           <div style={{ marginBottom: '24px' }}>
             <div style={{
               display: 'flex',
@@ -791,7 +734,80 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
             </div>
           </div>
 
-          {/* Notes */}
+          <div style={{ 
+            marginBottom: '24px',
+            padding: '20px',
+            backgroundColor: '#f9fafb',
+            borderRadius: '12px',
+            border: '1px solid #e5e7eb'
+          }}>
+            <h3 style={{ fontSize: '16px', fontWeight: '600', color: '#111827', marginBottom: '16px' }}>
+              Payment Information
+            </h3>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+              <div>
+                <label style={{
+                  display: 'block',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: '#374151',
+                  marginBottom: '8px'
+                }}>
+                  Payment Method *
+                </label>
+                <select
+                  value={paymentMethod}
+                  onChange={(e) => setPaymentMethod(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    backgroundColor: 'white'
+                  }}
+                >
+                  <option value="cash">Cash</option>
+                  <option value="card">Credit/Debit Card</option>
+                  <option value="upi">UPI</option>
+                  <option value="bank_transfer">Bank Transfer</option>
+                  <option value="cheque">Cheque</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{
+                  display: 'block',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: '#374151',
+                  marginBottom: '8px'
+                }}>
+                  Payment Status *
+                </label>
+                <select
+                  value={paymentStatus}
+                  onChange={(e) => setPaymentStatus(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    backgroundColor: 'white'
+                  }}
+                >
+                  <option value="paid">Paid</option>
+                  <option value="pending">Pending</option>
+                  <option value="partial">Partially Paid</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
           <div style={{ marginBottom: '24px' }}>
             <label style={{
               display: 'block',
@@ -818,7 +834,6 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
             />
           </div>
 
-          {/* Summary Section */}
           <div style={{
             padding: '20px',
             backgroundColor: '#f9fafb',
@@ -837,6 +852,7 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
                 </div>
                 <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
                   Customer: {customerName || '--'} • 
+                  {companyName && `Company: ${companyName} • `}
                   Payment: {paymentMethod} ({paymentStatus}) • 
                   Items: {invoiceItems.filter(item => item.itemId).length} • 
                   Quantity: {invoiceItems.reduce((sum, item) => sum + (item.quantity || 0), 0)}
@@ -853,7 +869,6 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
             </div>
           </div>
 
-          {/* Buttons */}
           <div style={{
             display: 'flex',
             justifyContent: 'flex-end',
@@ -926,7 +941,6 @@ export default function InvoiceModal({ isOpen, onClose, onInvoiceCreated }) {
         </form>
       </div>
 
-      {/* Add spinner animation */}
       <style>{`
         @keyframes spin {
           to { transform: rotate(360deg); }
